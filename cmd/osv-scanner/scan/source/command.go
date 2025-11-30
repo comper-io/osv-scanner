@@ -72,6 +72,15 @@ func Command(stdout, stderr io.Writer, client *http.Client) *cli.Command {
 				Name:  "maven-registry",
 				Usage: "URL of the default registry to fetch Maven metadata",
 			},
+			&cli.StringFlag{
+				Name:  "repo",
+				Usage: "scan a bare git repository at the given path",
+			},
+			&cli.StringFlag{
+				Name:    "repo-commit",
+				Aliases: []string{"commit"},
+				Usage:   "specific commit to scan in the git repository (requires --repo)",
+			},
 		}, helper.BuildCommonScanFlags([]string{"lockfile", "sbom", "directory"})...),
 		ArgsUsage: "[directory1 directory2...]",
 		Action: func(ctx context.Context, cmd *cli.Command) error {
@@ -81,6 +90,29 @@ func Command(stdout, stderr io.Writer, client *http.Client) *cli.Command {
 }
 
 func action(_ context.Context, cmd *cli.Command, stdout, stderr io.Writer, client *http.Client) error {
+	// Validate flags
+	repo := cmd.String("repo")
+	repoCommit := cmd.String("repo-commit")
+
+	if repo != "" {
+		// --repo cannot be used with directories
+		if len(cmd.Args().Slice()) > 0 {
+			return errors.New("--repo cannot be used with directory arguments")
+		}
+		// --repo cannot be used with --lockfile
+		if len(cmd.StringSlice("lockfile")) > 0 {
+			return errors.New("--repo cannot be used with --lockfile")
+		}
+		// --repo cannot be used with --sbom
+		if len(cmd.StringSlice("sbom")) > 0 {
+			return errors.New("--repo cannot be used with --sbom")
+		}
+	}
+
+	if repoCommit != "" && repo == "" {
+		return errors.New("--repo-commit cannot be used without --repo")
+	}
+
 	format := cmd.String("format")
 
 	outputPath := cmd.String("output")
@@ -122,6 +154,8 @@ func action(_ context.Context, cmd *cli.Command, stdout, stderr io.Writer, clien
 	scannerAction.Recursive = cmd.Bool("recursive")
 	scannerAction.NoIgnore = cmd.Bool("no-ignore")
 	scannerAction.DirectoryPaths = cmd.Args().Slice()
+	scannerAction.Repo = repo
+	scannerAction.RepoCommit = repoCommit
 	scannerAction.ExperimentalScannerActions = experimentalScannerActions
 
 	var vulnResult models.VulnerabilityResults
