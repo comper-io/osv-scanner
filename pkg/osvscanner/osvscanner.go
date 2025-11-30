@@ -67,6 +67,10 @@ type ScannerActions struct {
 
 	// Deprecated: in favor of LockfilePaths
 	SBOMPaths []string
+
+	// Git repository scanning
+	Repo       string
+	RepoCommit string
 }
 
 type ExperimentalScannerActions struct {

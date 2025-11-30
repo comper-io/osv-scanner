@@ -21,6 +21,7 @@ import (
 	"github.com/google/osv-scalibr/extractor/filesystem/language/python/requirements"
 	"github.com/google/osv-scalibr/extractor/filesystem/simplefileapi"
 	"github.com/google/osv-scalibr/fs"
+	"github.com/google/osv-scalibr/fs/gitfs"
 	"github.com/google/osv-scalibr/inventory"
 	"github.com/google/osv-scalibr/log"
 	"github.com/google/osv-scalibr/plugin"
@@ -154,6 +155,99 @@ func scan(accessors ExternalAccessors, actions ScannerActions) (*inventory.Inven
 	}
 
 	scanner := scalibr.New()
+
+	// --- Git Repository Scanning ---
+	if actions.Repo != "" {
+		testlogger.BeginDirScanMarker()
+		defer testlogger.EndDirScanMarker()
+
+		gitFS, err := gitfs.New(actions.Repo, actions.RepoCommit)
+		if err != nil {
+			return nil, fmt.Errorf("failed to initialize git filesystem: %w", err)
+		}
+
+		capabilities := plugin.Capabilities{
+			OS:            plugin.OSLinux,
+			Network:       plugin.NetworkOnline,
+			DirectFS:      false,
+			RunningSystem: false,
+		}
+
+		if actions.CompareOffline {
+			capabilities.Network = plugin.NetworkOffline
+		}
+
+		// Add git commits directly if specified
+		gitDirectPlugin := gitcommitdirect.New(actions.GitCommits)
+
+		// For git repos, default to recursive scanning if not explicitly set
+		recursive := actions.Recursive
+		if !recursive {
+			recursive = true
+		}
+
+		sr := scanner.Scan(context.Background(), &scalibr.ScanConfig{
+			Plugins:               append(plugin.FilterByCapabilities(plugins, &capabilities), gitDirectPlugin),
+			Capabilities:          &capabilities,
+			ScanRoots:             []*fs.ScanRoot{{FS: gitFS, Path: ""}},
+			PathsToExtract:        nil,
+			IgnoreSubDirs:         !recursive,
+			DirsToSkip:            nil,
+			SkipDirRegex:          nil,
+			SkipDirGlob:           nil,
+			UseGitignore:          !actions.NoIgnore,
+			Stats:                 &fileOpenedPrinter{filesExtracted: make(map[string]struct{})},
+			ReadSymlinks:          false,
+			MaxInodes:             0,
+			StoreAbsolutePath:     true,
+			PrintDurationAnalysis: false,
+			ErrorOnFSErrors:       false,
+			ExplicitPlugins:       true,
+		})
+
+		// --- Check status of the run ---
+		if sr.Status.Status == plugin.ScanStatusFailed {
+			return nil, errors.New(sr.Status.FailureReason)
+		}
+
+		for _, status := range sr.PluginStatus {
+			if status.Status.Status != plugin.ScanStatusSucceeded {
+				builder := strings.Builder{}
+				for _, fileError := range status.Status.FileErrors {
+					if len(status.Status.FileErrors) > 1 {
+						builder.WriteString("\n\t")
+					}
+					builder.WriteString(fmt.Sprintf("%s: %s", fileError.FilePath, fileError.ErrorMessage))
+				}
+				cmdlogger.Errorf("Error during extraction: (extracting as %s) %s", status.Name, builder.String())
+			}
+		}
+
+		slices.SortFunc(sr.Inventory.Packages, inventorySort)
+		invsCompact := slices.CompactFunc(sr.Inventory.Packages, func(a, b *extractor.Package) bool {
+			return inventorySort(a, b) == 0
+		})
+		sr.Inventory.Packages = invsCompact
+
+		if len(sr.Inventory.Packages) == 0 {
+			return nil, ErrNoPackagesFound
+		}
+
+		scanResult := imodels.ScanResult{
+			GenericFindings: sr.Inventory.GenericFindings,
+		}
+
+		// Convert to imodels.PackageScanResult for use in the rest of osv-scanner
+		for _, inv := range sr.Inventory.Packages {
+			pi := imodels.FromInventory(inv)
+			scanResult.PackageResults = append(
+				scanResult.PackageResults,
+				imodels.PackageScanResult{PackageInfo: pi},
+			)
+		}
+
+		return &scanResult, nil
+	}
 
 	// Build list of paths for each root
 	// On linux this would return a map with just one entry of /
