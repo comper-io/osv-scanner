@@ -97,8 +97,8 @@ github.com/client9/misspell v0.3.4/go.mod h1:qj6jICC3Q7zFZvVWo7KLAzC3yx5G7kyvSDk
 github.com/cloudflare/circl v1.6.1 h1:zqIqSPIndyBh1bjLVVDHMPpVKqp8Su/V+6MeDzzQBQ0=
 github.com/cloudflare/circl v1.6.1/go.mod h1:uddAzsPgqdMAYatqJ0lsjX1oECcQLIlRpzZh3pJrofs=
 github.com/cncf/udpa/go v0.0.0-20191209042840-269d4d468f6f/go.mod h1:M8M6+tZqaGXZJjfX53e64911xZQV5JYwmTeXPW+k8Sc=
-github.com/comper-io/osv-scalibr v0.4.0-comper h1:uNppwFrXKcgzqU8NlYtXE7cYsnwZ2kPxuRzYLusMWcw=
-github.com/comper-io/osv-scalibr v0.4.0-comper/go.mod h1:pV8ZvNVc6+gtbHjKzBTpxdPqv7U6FLcS5VM0mn6vrFs=
+github.com/comper-io/osv-scalibr v0.4.1-comper h1:0rbuGQ9dPIliEGVYoEV0gD7OovV1PLvhU7ugbg15HSY=
+github.com/comper-io/osv-scalibr v0.4.1-comper/go.mod h1:3dAJSbg4xi0afHFt5rhuU4Xn/1n6Ykm/MXevbo9DSBI=
 github.com/compose-spec/compose-go/v2 v2.8.1 h1:27O4dzyhiS/UEUKp1zHOHCBWD1WbxGsYGMNNaSejTk4=
 github.com/compose-spec/compose-go/v2 v2.8.1/go.mod h1:veko/VB7URrg/tKz3vmIAQDaz+CGiXH8vZsW79NmAww=
 github.com/containerd/cgroups/v3 v3.0.5 h1:44na7Ud+VwyE7LIoJ8JTNQOa549a8543BmzaJHo6Bzo=
