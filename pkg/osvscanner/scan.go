@@ -11,19 +11,20 @@ import (
 	"strings"
 
 	scalibr "github.com/google/osv-scalibr"
+	"github.com/google/osv-scalibr/detector"
 	"github.com/google/osv-scalibr/enricher"
 	"github.com/google/osv-scalibr/enricher/packagedeprecation"
 	"github.com/google/osv-scalibr/enricher/reachability/java"
 	transitivedependencyrequirements "github.com/google/osv-scalibr/enricher/transitivedependency/requirements"
 	"github.com/google/osv-scalibr/extractor"
 	"github.com/google/osv-scalibr/extractor/filesystem"
-	"github.com/google/osv-scalibr/extractor/filesystem/language/java/pomxmlnet"
 	"github.com/google/osv-scalibr/extractor/filesystem/language/python/requirements"
 	"github.com/google/osv-scalibr/extractor/filesystem/simplefileapi"
 	"github.com/google/osv-scalibr/fs"
 	"github.com/google/osv-scalibr/fs/gitfs"
 	"github.com/google/osv-scalibr/inventory"
 	"github.com/google/osv-scalibr/plugin"
+	cpb "github.com/google/osv-scalibr/binary/proto/config_go_proto"
 	"github.com/google/osv-scanner/v2/internal/cmdlogger"
 	"github.com/google/osv-scanner/v2/internal/imodels"
 	"github.com/google/osv-scanner/v2/internal/scalibrextract/filesystem/vendored"
@@ -41,10 +42,11 @@ var ErrExtractorNotFound = errors.New("could not determine extractor suitable to
 func configurePlugins(plugins []plugin.Plugin, accessors ExternalAccessors, actions ScannerActions) {
 	for _, plug := range plugins {
 		if accessors.DependencyClients[osvconstants.EcosystemMaven] != nil && accessors.MavenRegistryAPIClient != nil {
-			pomxmlenhanceable.EnhanceIfPossible(plug, pomxmlnet.Config{
-				DependencyClient:       accessors.DependencyClients[osvconstants.EcosystemMaven],
-				MavenRegistryAPIClient: accessors.MavenRegistryAPIClient,
-			})
+			// Create a PluginConfig for pomxmlnet
+			// The new API creates clients internally, so we just need to pass an empty config
+			// or a config with any specific settings if needed
+			config := &cpb.PluginConfig{}
+			pomxmlenhanceable.EnhanceIfPossible(plug, config)
 		}
 
 		vendored.Configure(plug, vendored.Config{
@@ -84,7 +86,7 @@ func getPlugins(defaultPlugins []string, accessors ExternalAccessors, actions Sc
 
 	// todo: use Enricher.RequiredPlugins to check this generically
 	if accessors.DependencyClients[osvconstants.EcosystemPyPI] != nil && isRequirementsExtractorEnabled(plugins) {
-		plugins = append(plugins, transitivedependencyrequirements.NewEnricher(accessors.DependencyClients[osvconstants.EcosystemPyPI]))
+		plugins = append(plugins, transitivedependencyrequirements.New(&cpb.PluginConfig{}))
 	}
 
 	configurePlugins(plugins, accessors, actions)
@@ -127,7 +129,7 @@ func scan(accessors ExternalAccessors, actions ScannerActions) (*imodels.ScanRes
 	}
 
 	if actions.FlagDeprecatedPackages {
-		plugins = append(plugins, packagedeprecation.New())
+		plugins = append(plugins, packagedeprecation.New(&cpb.PluginConfig{}))
 	}
 
 	scanner := scalibr.New()
@@ -195,7 +197,23 @@ func scan(accessors ExternalAccessors, actions ScannerActions) (*imodels.ScanRes
 					}
 					builder.WriteString(fmt.Sprintf("%s: %s", fileError.FilePath, fileError.ErrorMessage))
 				}
-				cmdlogger.Errorf("Error during extraction: (extracting as %s) %s", status.Name, builder.String())
+				// Check if it's a detector by finding the plugin in the plugins list or by name pattern
+				isDetector := false
+				for _, plug := range plugins {
+					if plug.Name() == status.Name {
+						_, isDetector = plug.(detector.Detector)
+						break
+					}
+				}
+				// Fallback: check name pattern for detectors (detectors often have "detector" or specific prefixes in their names)
+				if !isDetector && (strings.Contains(status.Name, "detector") || strings.Contains(status.Name, "weakcredentials") || strings.Contains(status.Name, "cis") || strings.Contains(status.Name, "govulncheck")) {
+					isDetector = true
+				}
+				if isDetector {
+					cmdlogger.Errorf("Error during detection: (detecting as %s) %s", status.Name, builder.String())
+				} else {
+					cmdlogger.Errorf("Error during extraction: (extracting as %s) %s", status.Name, builder.String())
+				}
 			}
 		}
 
@@ -205,7 +223,8 @@ func scan(accessors ExternalAccessors, actions ScannerActions) (*imodels.ScanRes
 		})
 		sr.Inventory.Packages = invsCompact
 
-		if len(sr.Inventory.Packages) == 0 {
+		// Allow scan to succeed if there are GenericFindings even without packages
+		if len(sr.Inventory.Packages) == 0 && len(sr.Inventory.GenericFindings) == 0 {
 			return nil, ErrNoPackagesFound
 		}
 
@@ -366,7 +385,23 @@ SBOMLoop:
 						criticalError = true
 					}
 				}
-				cmdlogger.Errorf("Error during extraction: (extracting as %s) %s", status.Name, builder.String())
+				// Check if it's a detector by finding the plugin in the plugins list or by name pattern
+				isDetector := false
+				for _, plug := range plugins {
+					if plug.Name() == status.Name {
+						_, isDetector = plug.(detector.Detector)
+						break
+					}
+				}
+				// Fallback: check name pattern for detectors (detectors often have "detector" or specific prefixes in their names)
+				if !isDetector && (strings.Contains(status.Name, "detector") || strings.Contains(status.Name, "weakcredentials") || strings.Contains(status.Name, "cis") || strings.Contains(status.Name, "govulncheck")) {
+					isDetector = true
+				}
+				if isDetector {
+					cmdlogger.Errorf("Error during detection: (detecting as %s) %s", status.Name, builder.String())
+				} else {
+					cmdlogger.Errorf("Error during extraction: (extracting as %s) %s", status.Name, builder.String())
+				}
 				if criticalError {
 					return nil, errors.New("extraction failed on specified lockfile")
 				}
@@ -393,7 +428,8 @@ SBOMLoop:
 		}
 	}
 
-	if len(scannedInventories) == 0 {
+	// Allow scan to succeed if there are GenericFindings even without packages
+	if len(scannedInventories) == 0 && len(genericFindings) == 0 {
 		return nil, ErrNoPackagesFound
 	}
 
