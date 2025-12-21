@@ -6,6 +6,7 @@ import (
 
 	scalibrconfig "github.com/google/osv-scalibr/plugin/config"
 	"github.com/google/osv-scanner/v2/cmd/osv-scanner/scan/image"
+	"github.com/google/osv-scanner/v2/cmd/osv-scanner/scan/server"
 	"github.com/google/osv-scanner/v2/cmd/osv-scanner/scan/source"
 	"github.com/urfave/cli/v3"
 )
@@ -14,7 +15,7 @@ const sourceSubCommand = "source"
 
 const DefaultSubcommand = sourceSubCommand
 
-var Subcommands = []string{sourceSubCommand, "image"}
+var Subcommands = []string{sourceSubCommand, "image", "server"}
 
 func Command(stdout, stderr io.Writer, clientFactories scalibrconfig.ClientFactories) *cli.Command {
 	return &cli.Command{
@@ -24,6 +25,7 @@ func Command(stdout, stderr io.Writer, clientFactories scalibrconfig.ClientFacto
 		Commands: []*cli.Command{
 			source.Command(stdout, stderr, clientFactories),
 			image.Command(stdout, stderr, clientFactories),
+			server.Command(stdout, stderr, clientFactories),
 		},
 	}
 }
