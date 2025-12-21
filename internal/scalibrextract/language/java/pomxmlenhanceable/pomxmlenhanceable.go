@@ -26,8 +26,8 @@ type Extractor struct {
 
 // New returns a new instance of the extractor.
 func New(config *cpb.PluginConfig) (filesystem.Extractor, error) {
-	base, err := pomxml.New(config)
-	return &Extractor{offline: base, online: base}, err
+	base := pomxml.New()
+	return &Extractor{offline: base, online: base}, nil
 }
 
 // Name of the extractor
@@ -83,9 +83,9 @@ type enhanceable interface {
 
 // Enhance uses the given config to improve the abilities of this extractor,
 // at the cost of additional requirements such as networking and direct fs access
-func (e *Extractor) Enhance(config *cpb.PluginConfig) (err error) {
-	e.online, err = pomxmlnet.New(config)
-	return
+func (e *Extractor) Enhance(config *cpb.PluginConfig) error {
+	e.online = pomxmlnet.New(config)
+	return nil
 }
 
 var _ enhanceable = &Extractor{}

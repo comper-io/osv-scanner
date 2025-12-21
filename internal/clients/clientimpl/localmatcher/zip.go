@@ -14,6 +14,7 @@ import (
 	"path"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/google/osv-scalibr/extractor"
 	"github.com/google/osv-scanner/v2/internal/cmdlogger"
@@ -233,6 +234,9 @@ func (db *ZipDB) loadZipFile(zipFile *zip.File, names []string) {
 func (db *ZipDB) load(ctx context.Context, names []string) error {
 	db.Vulnerabilities = []*osvschema.Vulnerability{}
 
+	start := time.Now()
+	cmdlogger.Infof("Loading %s OSV database from %s...", db.Name, db.StoredAt)
+
 	f, err := db.fetchZip(ctx)
 
 	if err != nil {
@@ -260,6 +264,8 @@ func (db *ZipDB) load(ctx context.Context, names []string) error {
 
 		db.loadZipFile(zipFile, names)
 	}
+
+	cmdlogger.Infof("Loaded %s OSV database (%d vulnerabilities) in %v", db.Name, len(db.Vulnerabilities), time.Since(start))
 
 	return nil
 }

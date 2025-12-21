@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"sync"
 
 	"github.com/google/osv-scalibr/extractor"
 	"github.com/google/osv-scalibr/inventory/osvecosystem"
@@ -30,6 +31,9 @@ type LocalMatcher struct {
 	failedDBs map[osvconstants.Ecosystem]error
 	// userAgent sets the user agent requests for db zips are made with
 	userAgent string
+
+	mu       sync.Mutex
+	FullLoad bool
 }
 
 func NewLocalMatcher(localDBPath string, userAgent string, downloadDB bool) (*LocalMatcher, error) {
@@ -53,11 +57,14 @@ func (matcher *LocalMatcher) MatchVulnerabilities(ctx context.Context, invs []*e
 	// ensure all databases loaded so far have been fully loaded; this is just a
 	// basic safeguard since we don't actually currently attempt to reuse matchers
 	// across scans, and its possible we never will, so we don't need to be smart
+	matcher.mu.Lock()
 	for _, db := range matcher.dbs {
 		if db.Partial {
+			matcher.mu.Unlock()
 			return nil, errors.New("local matcher cannot be (re)used with a partially loaded database")
 		}
 	}
+	matcher.mu.Unlock()
 
 	for _, inv := range invs {
 		if ctx.Err() != nil {
@@ -113,12 +120,20 @@ func (matcher *LocalMatcher) LoadEcosystem(ctx context.Context, eco osvecosystem
 }
 
 func (matcher *LocalMatcher) loadDBFromCache(ctx context.Context, eco osvconstants.Ecosystem, invs []*extractor.Package) (*ZipDB, error) {
+	matcher.mu.Lock()
+	defer matcher.mu.Unlock()
+
 	if db, ok := matcher.dbs[eco]; ok {
 		return db, nil
 	}
 
 	if matcher.failedDBs[eco] != nil {
 		return nil, matcher.failedDBs[eco]
+	}
+
+	loadInvs := invs
+	if matcher.FullLoad {
+		loadInvs = nil
 	}
 
 	db, err := NewZippedDB(
@@ -128,17 +143,14 @@ func (matcher *LocalMatcher) loadDBFromCache(ctx context.Context, eco osvconstan
 		fmt.Sprintf("%s/%s/all.zip", zippedDBRemoteHost, eco),
 		matcher.userAgent,
 		!matcher.downloadDB,
-		invs,
+		loadInvs,
 	)
 
 	if err != nil {
 		matcher.failedDBs[eco] = err
-		cmdlogger.Errorf("could not load db for %s ecosystem: %v", eco, err)
 
 		return nil, err
 	}
-
-	cmdlogger.Infof("Loaded %s local db from %s", db.Name, db.StoredAt)
 
 	matcher.dbs[eco] = db
 

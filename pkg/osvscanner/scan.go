@@ -12,6 +12,7 @@ import (
 
 	scalibr "github.com/google/osv-scalibr"
 	cpb "github.com/google/osv-scalibr/binary/proto/config_go_proto"
+	"github.com/google/osv-scalibr/detector"
 	"github.com/google/osv-scalibr/enricher"
 	"github.com/google/osv-scalibr/enricher/packagedeprecation"
 	"github.com/google/osv-scalibr/enricher/reachability/java"
@@ -33,6 +34,8 @@ import (
 	"github.com/google/osv-scanner/v2/internal/scalibrplugin"
 	"github.com/google/osv-scanner/v2/internal/testlogger"
 	"github.com/google/osv-scanner/v2/pkg/osvscanner/internal/scanners"
+
+	"github.com/ossf/osv-schema/bindings/go/osvconstants"
 )
 
 var ErrExtractorNotFound = errors.New("could not determine extractor suitable to this file")
@@ -56,6 +59,8 @@ func configurePlugins(plugins []plugin.Plugin, accessors ExternalAccessors, acti
 			if err != nil {
 				log.Errorf("Failed to enhance pomxml extractor: %v", err)
 			}
+		} else if accessors.DependencyClients != nil && accessors.DependencyClients[osvconstants.EcosystemMaven] != nil && accessors.MavenRegistryAPIClient != nil {
+			_ = pomxmlenhanceable.EnhanceIfPossible(plug, &cpb.PluginConfig{})
 		}
 
 		vendored.Configure(plug, vendored.Config{
@@ -98,6 +103,13 @@ func getPlugins(defaultPlugins []string, accessors ExternalAccessors, actions Sc
 		p, err := transitivedependencyrequirements.New(&cpb.PluginConfig{
 			UserAgent: actions.RequestUserAgent,
 		})
+		if err != nil {
+			log.Errorf("Failed to make transitivedependencyrequirements enricher: %v", err)
+		} else {
+			plugins = append(plugins, p)
+		}
+	} else if accessors.DependencyClients != nil && accessors.DependencyClients[osvconstants.EcosystemPyPI] != nil && isRequirementsExtractorEnabled(plugins) {
+		p, err := transitivedependencyrequirements.New(&cpb.PluginConfig{})
 		if err != nil {
 			log.Errorf("Failed to make transitivedependencyrequirements enricher: %v", err)
 		} else {
@@ -219,7 +231,23 @@ func scan(accessors ExternalAccessors, actions ScannerActions) (*inventory.Inven
 					}
 					builder.WriteString(fmt.Sprintf("%s: %s", fileError.FilePath, fileError.ErrorMessage))
 				}
-				cmdlogger.Errorf("Error during extraction: (extracting as %s) %s", status.Name, builder.String())
+				// Check if it's a detector by finding the plugin in the plugins list or by name pattern
+				isDetector := false
+				for _, plug := range plugins {
+					if plug.Name() == status.Name {
+						_, isDetector = plug.(detector.Detector)
+						break
+					}
+				}
+				// Fallback: check name pattern for detectors (detectors often have "detector" or specific prefixes in their names)
+				if !isDetector && (strings.Contains(status.Name, "detector") || strings.Contains(status.Name, "weakcredentials") || strings.Contains(status.Name, "cis") || strings.Contains(status.Name, "govulncheck")) {
+					isDetector = true
+				}
+				if isDetector {
+					cmdlogger.Errorf("Error during detection: (detecting as %s) %s", status.Name, builder.String())
+				} else {
+					cmdlogger.Errorf("Error during extraction: (extracting as %s) %s", status.Name, builder.String())
+				}
 			}
 		}
 
@@ -229,7 +257,8 @@ func scan(accessors ExternalAccessors, actions ScannerActions) (*inventory.Inven
 		})
 		sr.Inventory.Packages = invsCompact
 
-		if len(sr.Inventory.Packages) == 0 {
+		// Allow scan to succeed if there are GenericFindings even without packages
+		if len(sr.Inventory.Packages) == 0 && len(sr.Inventory.GenericFindings) == 0 {
 			return nil, ErrNoPackagesFound
 		}
 
@@ -396,14 +425,23 @@ SBOMLoop:
 						criticalError = true
 					}
 				}
-
-				msg := status.Status.FailureReason
-
-				if len(status.Status.FileErrors) > 0 {
-					msg = builder.String()
+				// Check if it's a detector by finding the plugin in the plugins list or by name pattern
+				isDetector := false
+				for _, plug := range plugins {
+					if plug.Name() == status.Name {
+						_, isDetector = plug.(detector.Detector)
+						break
+					}
 				}
-
-				cmdlogger.Errorf("Error during extraction: (extracting as %s) %s", status.Name, msg)
+				// Fallback: check name pattern for detectors (detectors often have "detector" or specific prefixes in their names)
+				if !isDetector && (strings.Contains(status.Name, "detector") || strings.Contains(status.Name, "weakcredentials") || strings.Contains(status.Name, "cis") || strings.Contains(status.Name, "govulncheck")) {
+					isDetector = true
+				}
+				if isDetector {
+					cmdlogger.Errorf("Error during detection: (detecting as %s) %s", status.Name, builder.String())
+				} else {
+					cmdlogger.Errorf("Error during extraction: (extracting as %s) %s", status.Name, builder.String())
+				}
 				if criticalError {
 					return nil, errors.New("extraction failed on specified lockfile")
 				}
@@ -430,7 +468,8 @@ SBOMLoop:
 		}
 	}
 
-	if len(inv.Packages) == 0 {
+	// Allow scan to succeed if there are GenericFindings even without packages
+	if len(inv.Packages) == 0 && len(inv.GenericFindings) == 0 {
 		return nil, ErrNoPackagesFound
 	}
 

@@ -38,6 +38,8 @@ import (
 	"github.com/google/osv-scanner/v2/pkg/osvscanner/internal/imagehelpers"
 	"github.com/ossf/osv-schema/bindings/go/osvconstants"
 	"osv.dev/bindings/go/osvdev"
+
+	"deps.dev/util/resolve"
 )
 
 type ScannerActions struct {
@@ -60,6 +62,7 @@ type ScannerActions struct {
 	CompareOffline    bool
 	DownloadDatabases bool
 	LocalDBPath       string
+	FullLoadLocalDB   bool
 
 	// license scanning
 	ScanLicensesSummary   bool
@@ -107,6 +110,10 @@ type ExternalAccessors struct {
 
 	// Required for vendored Extractor
 	OSVDevClient *osvdev.OSVClient
+
+	// For server mode: dependency resolution clients
+	DependencyClients      map[osvconstants.Ecosystem]resolve.Client
+	MavenRegistryAPIClient interface{}
 }
 
 // ErrNoPackagesFound for when no packages are found during a scan.
@@ -120,8 +127,10 @@ var ErrVulnerabilitiesFound = errors.New("vulnerabilities found")
 // TODO(v2): Actually use this error
 var ErrAPIFailed = errors.New("API query failed")
 
-func initializeExternalAccessors(actions ScannerActions) (ExternalAccessors, error) {
-	externalAccessors := ExternalAccessors{}
+func InitializeExternalAccessors(actions ScannerActions) (ExternalAccessors, error) {
+	externalAccessors := ExternalAccessors{
+		DependencyClients: map[osvconstants.Ecosystem]resolve.Client{},
+	}
 	var err error
 
 	userAgent := "osv-scanner-api"
@@ -133,12 +142,13 @@ func initializeExternalAccessors(actions ScannerActions) (ExternalAccessors, err
 	// ------------
 	if actions.CompareOffline {
 		// --- Vulnerability Matcher ---
-		externalAccessors.VulnMatcher, err =
-			localmatcher.NewLocalMatcher(actions.LocalDBPath,
-				userAgent, actions.DownloadDatabases)
+		lm, err := localmatcher.NewLocalMatcher(actions.LocalDBPath,
+			userAgent, actions.DownloadDatabases)
 		if err != nil {
 			return ExternalAccessors{}, err
 		}
+		lm.FullLoad = actions.FullLoadLocalDB
+		externalAccessors.VulnMatcher = lm
 
 		return externalAccessors, nil
 	}
@@ -182,6 +192,17 @@ func DoScan(actions ScannerActions) (models.VulnerabilityResults, error) {
 		return models.VulnerabilityResults{}, errors.New("databases can only be downloaded when running in offline mode")
 	}
 
+	// --- Setup Accessors/Clients ---
+	accessors, err := InitializeExternalAccessors(actions)
+	if err != nil {
+		return models.VulnerabilityResults{}, fmt.Errorf("failed to initialize accessors: %w", err)
+	}
+
+	return DoScanWithAccessors(actions, accessors)
+}
+
+func DoScanWithAccessors(actions ScannerActions, accessors ExternalAccessors) (models.VulnerabilityResults, error) {
+	totalStart := time.Now()
 	scanResult := results.ScanResults{
 		ConfigManager: config.Manager{
 			DefaultConfig: config.Config{},
@@ -198,17 +219,13 @@ func DoScan(actions ScannerActions) (models.VulnerabilityResults, error) {
 		}
 	}
 
-	// --- Setup Accessors/Clients ---
-	accessors, err := initializeExternalAccessors(actions)
-	if err != nil {
-		return models.VulnerabilityResults{}, fmt.Errorf("failed to initialize accessors: %w", err)
-	}
-
 	// ----- Perform Scanning -----
+	scanStart := time.Now()
 	packagesAndFindings, err := scan(accessors, actions)
 	if err != nil {
 		return models.VulnerabilityResults{}, err
 	}
+	cmdlogger.Infof("Scanning/resolving packages took %v", time.Since(scanStart))
 
 	// Convert to imodels.PackageScanResult for use in the rest of osv-scanner
 	for _, pkg := range packagesAndFindings.Packages {
@@ -230,28 +247,36 @@ func DoScan(actions ScannerActions) (models.VulnerabilityResults, error) {
 
 	// --- Make Vulnerability Requests ---
 	if accessors.VulnMatcher != nil {
+		vulnStart := time.Now()
 		err = makeVulnRequestWithMatcher(scanResult.PackageScanResults, accessors.VulnMatcher)
 		if err != nil {
 			return models.VulnerabilityResults{}, err
 		}
+		cmdlogger.Infof("Vulnerability matching took %v", time.Since(vulnStart))
 	}
 
 	// --- Make License Requests ---
 	if accessors.LicenseMatcher != nil {
+		licenseStart := time.Now()
 		err = accessors.LicenseMatcher.MatchLicenses(context.Background(), scanResult.PackageScanResults)
 		if err != nil {
 			return models.VulnerabilityResults{}, err
 		}
+		cmdlogger.Infof("License matching took %v", time.Since(licenseStart))
 	}
 
 	if len(unscannablePackages) > 0 {
 		scanResult.PackageScanResults = slices.Concat(scanResult.PackageScanResults, unscannablePackages)
 	}
 
-	return finalizeScanResult(scanResult, actions)
+	results, err := finalizeScanResult(scanResult, actions)
+	cmdlogger.Infof("Total scan time %v", time.Since(totalStart))
+
+	return results, err
 }
 
 func DoContainerScan(actions ScannerActions) (models.VulnerabilityResults, error) {
+	totalStart := time.Now()
 	scanResult := results.ScanResults{
 		ConfigManager: config.Manager{
 			DefaultConfig: config.Config{},
@@ -268,7 +293,7 @@ func DoContainerScan(actions ScannerActions) (models.VulnerabilityResults, error
 	}
 
 	// --- Setup Accessors/Clients ---
-	accessors, err := initializeExternalAccessors(actions)
+	accessors, err := InitializeExternalAccessors(actions)
 	if err != nil {
 		return models.VulnerabilityResults{}, fmt.Errorf("failed to initialize accessors: %w", err)
 	}
@@ -345,6 +370,7 @@ func DoContainerScan(actions ScannerActions) (models.VulnerabilityResults, error
 
 	// --- Do Scalibr Scan ---
 	scanner := scalibr.New()
+	scanStart := time.Now()
 	scalibrSR, err := scanner.ScanContainer(context.Background(), img, &scalibr.ScanConfig{
 		Plugins:           plugins,
 		Capabilities:      capabilities,
@@ -354,6 +380,7 @@ func DoContainerScan(actions ScannerActions) (models.VulnerabilityResults, error
 	if err != nil {
 		return models.VulnerabilityResults{}, fmt.Errorf("failed to scan container image: %w", err)
 	}
+	cmdlogger.Infof("Container scanning took %v", time.Since(scanStart))
 
 	if inventoryIsEmpty(scalibrSR.Inventory) {
 		return models.VulnerabilityResults{}, ErrNoPackagesFound
@@ -386,18 +413,22 @@ func DoContainerScan(actions ScannerActions) (models.VulnerabilityResults, error
 
 	// --- Make Vulnerability Requests ---
 	if accessors.VulnMatcher != nil {
+		vulnStart := time.Now()
 		err = makeVulnRequestWithMatcher(scanResult.PackageScanResults, accessors.VulnMatcher)
 		if err != nil {
 			return models.VulnerabilityResults{}, err
 		}
+		cmdlogger.Infof("Vulnerability matching took %v", time.Since(vulnStart))
 	}
 
 	// --- Make License Requests ---
 	if accessors.LicenseMatcher != nil {
+		licenseStart := time.Now()
 		err = accessors.LicenseMatcher.MatchLicenses(context.Background(), scanResult.PackageScanResults)
 		if err != nil {
 			return models.VulnerabilityResults{}, err
 		}
+		cmdlogger.Infof("License matching took %v", time.Since(licenseStart))
 	}
 
 	scanResult.GenericFindings = scalibrSR.Inventory.GenericFindings
@@ -406,7 +437,10 @@ func DoContainerScan(actions ScannerActions) (models.VulnerabilityResults, error
 		scanResult.PackageScanResults = slices.Concat(scanResult.PackageScanResults, unscannablePackages)
 	}
 
-	return finalizeScanResult(scanResult, actions)
+	results, err := finalizeScanResult(scanResult, actions)
+	cmdlogger.Infof("Total container scan time %v", time.Since(totalStart))
+
+	return results, err
 }
 
 func finalizeScanResult(scanResult results.ScanResults, actions ScannerActions) (models.VulnerabilityResults, error) {
