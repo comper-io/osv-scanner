@@ -16,6 +16,7 @@ import (
 	"github.com/google/osv-scanner/v2/internal/imodels"
 	"github.com/ossf/osv-schema/bindings/go/osvconstants"
 	"github.com/ossf/osv-schema/bindings/go/osvschema"
+	"golang.org/x/sync/errgroup"
 )
 
 const zippedDBRemoteHost = "https://osv-vulnerabilities.storage.googleapis.com"
@@ -52,7 +53,7 @@ func NewLocalMatcher(localDBPath string, userAgent string, downloadDB bool) (*Lo
 }
 
 func (matcher *LocalMatcher) MatchVulnerabilities(ctx context.Context, invs []*extractor.Package) ([][]*osvschema.Vulnerability, error) {
-	results := make([][]*osvschema.Vulnerability, 0, len(invs))
+	results := make([][]*osvschema.Vulnerability, len(invs))
 
 	// ensure all databases loaded so far have been fully loaded; this is just a
 	// basic safeguard since we don't actually currently attempt to reuse matchers
@@ -66,44 +67,52 @@ func (matcher *LocalMatcher) MatchVulnerabilities(ctx context.Context, invs []*e
 	}
 	matcher.mu.Unlock()
 
-	for _, inv := range invs {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
+	g, ctx := errgroup.WithContext(ctx)
+	// Limit concurrency to avoid excessive memory usage or CPU contention
+	g.SetLimit(10)
 
-		pkg := imodels.FromInventory(inv)
-		eco := pkg.Ecosystem().Ecosystem
-
-		if pkg.Ecosystem().IsEmpty() {
-			if pkg.Commit() == "" {
-				// This should never happen, as those results will be filtered out before matching
-				return nil, errors.New("ecosystem is empty and there is no commit hash")
+	for i, inv := range invs {
+		g.Go(func() error {
+			if ctx.Err() != nil {
+				return ctx.Err()
 			}
 
-			// matching ecosystem-less versions can only be attempted if we have a version
-			if pkg.Version() == "" {
-				// Is a commit based query, skip local scanning
-				results = append(results, []*osvschema.Vulnerability{})
+			pkg := imodels.FromInventory(inv)
+			eco := pkg.Ecosystem().Ecosystem
 
-				// TODO (V2 logging):
-				cmdlogger.Infof("Skipping commit scanning for: %s", pkg.Commit())
+			if pkg.Ecosystem().IsEmpty() {
+				if pkg.Commit() == "" {
+					// This should never happen, as those results will be filtered out before matching
+					return errors.New("ecosystem is empty and there is no commit hash")
+				}
 
-				continue
+				// matching ecosystem-less versions can only be attempted if we have a version
+				if pkg.Version() == "" {
+					// Is a commit based query, skip local scanning
+					// No need to store anything in results[i] as it's already nil/empty
+					// TODO (V2 logging):
+					cmdlogger.Infof("Skipping commit scanning for: %s", pkg.Commit())
+
+					return nil
+				}
+
+				eco = "GIT"
 			}
 
-			eco = "GIT"
-		}
+			db, err := matcher.loadDBFromCache(ctx, eco, invs)
+			if err != nil {
+				// no logging here as the loader will have already done that
+				return nil
+			}
 
-		db, err := matcher.loadDBFromCache(ctx, eco, invs)
+			results[i] = VulnerabilitiesAffectingPackageInDB(db, pkg)
 
-		if err != nil {
-			// no logging here as the loader will have already done that
-			results = append(results, []*osvschema.Vulnerability{})
+			return nil
+		})
+	}
 
-			continue
-		}
-
-		results = append(results, VulnerabilitiesAffectingPackage(db.Vulnerabilities, pkg))
+	if err := g.Wait(); err != nil {
+		return nil, err
 	}
 
 	return results, nil

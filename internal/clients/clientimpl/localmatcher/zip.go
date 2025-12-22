@@ -41,6 +41,9 @@ type ZipDB struct {
 	// whether this database only has some of the advisories
 	// loaded from the underlying zip file
 	Partial bool
+
+	// Index maps package names to vulnerabilities that affect them
+	Index map[string][]*osvschema.Vulnerability
 }
 
 var ErrOfflineDatabaseNotFound = errors.New("no offline version of the OSV database is available")
@@ -197,6 +200,17 @@ func (db *ZipDB) loadZipFile(zipFile *zip.File, names []string) {
 	// that might actually affect those packages, rather than all advisories
 	if len(names) == 0 || mightAffectPackages(vulnerability, names) {
 		db.Vulnerabilities = append(db.Vulnerabilities, vulnerability)
+
+		// Populate index
+		if db.Index == nil {
+			db.Index = make(map[string][]*osvschema.Vulnerability)
+		}
+		for _, affected := range vulnerability.GetAffected() {
+			pkgName := affected.GetPackage().GetName()
+			if pkgName != "" {
+				db.Index[pkgName] = append(db.Index[pkgName], vulnerability)
+			}
+		}
 	}
 }
 
@@ -268,8 +282,6 @@ func NewZippedDB(ctx context.Context, dbBasePath, name, url, userAgent string, o
 }
 
 // VulnerabilitiesAffectingPackage returns the vulnerabilities that affects the provided package
-//
-// TODO: Move this to another file.
 func VulnerabilitiesAffectingPackage(allVulns []*osvschema.Vulnerability, pkg imodels.PackageInfo) []*osvschema.Vulnerability {
 	var vulnerabilities []*osvschema.Vulnerability
 
@@ -280,4 +292,20 @@ func VulnerabilitiesAffectingPackage(allVulns []*osvschema.Vulnerability, pkg im
 	}
 
 	return vulnerabilities
+}
+
+// VulnerabilitiesAffectingPackageInDB returns the vulnerabilities that affects the provided package
+// using the database index if available.
+func VulnerabilitiesAffectingPackageInDB(db *ZipDB, pkg imodels.PackageInfo) []*osvschema.Vulnerability {
+	candidates := db.Vulnerabilities
+	if db.Index != nil {
+		if c, ok := db.Index[pkg.Name()]; ok {
+			candidates = c
+		} else {
+			// If not in index, it's not in the DB
+			return nil
+		}
+	}
+
+	return VulnerabilitiesAffectingPackage(candidates, pkg)
 }

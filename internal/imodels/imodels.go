@@ -13,6 +13,7 @@ import (
 	rpmmetadata "github.com/google/osv-scalibr/extractor/filesystem/os/rpm/metadata"
 	"github.com/google/osv-scalibr/inventory"
 	"github.com/google/osv-scalibr/inventory/osvecosystem"
+	"github.com/google/osv-scalibr/semantic"
 	"github.com/google/osv-scanner/v2/internal/cachedregexp"
 	"github.com/google/osv-scanner/v2/internal/cmdlogger"
 	"github.com/google/osv-scanner/v2/internal/scalibrextract/language/osv/osvscannerjson"
@@ -40,6 +41,8 @@ type PackageInfo struct {
 	// purlCache is used to cache the special case for SBOMs where we convert Name, Version, and Ecosystem from purls
 	// extracted from the SBOM
 	purlCache *models.PackageInfo
+
+	parsedVersion semantic.Version
 }
 
 func (pkg *PackageInfo) Name() string {
@@ -140,6 +143,16 @@ func (pkg *PackageInfo) Version() string {
 	}
 
 	return pkg.Package.Version
+}
+
+func (pkg *PackageInfo) Semver() semantic.Version {
+	if pkg.parsedVersion != nil {
+		return pkg.parsedVersion
+	}
+
+	pkg.parsedVersion = semantic.MustParse(pkg.Version(), string(pkg.Ecosystem().Ecosystem))
+
+	return pkg.parsedVersion
 }
 
 func (pkg *PackageInfo) Location() string {
