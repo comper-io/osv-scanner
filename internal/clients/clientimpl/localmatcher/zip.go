@@ -42,6 +42,9 @@ type ZipDB struct {
 	// whether this database only has some of the advisories
 	// loaded from the underlying zip file
 	Partial bool
+
+	// Index maps package names to vulnerabilities that affect them
+	Index map[string][]*osvschema.Vulnerability
 }
 
 var ErrOfflineDatabaseNotFound = errors.New("no offline version of the OSV database is available")
@@ -188,6 +191,25 @@ func mightAffectPackagesBytes(content []byte, names []string) bool {
 	return false
 }
 
+func mightAffectPackages(v *osvschema.Vulnerability, names []string) bool {
+	for _, affected := range v.GetAffected() {
+		for _, name := range names {
+			if affected.GetPackage().GetName() == name {
+				return true
+			}
+
+			// "name" will be the git repository in the case of the GIT ecosystem
+			for _, ran := range affected.GetRanges() {
+				if vulns.NormalizeRepo(ran.GetRepo()) == vulns.NormalizeRepo(name) {
+					return true
+				}
+			}
+		}
+	}
+
+	return false
+}
+
 // Loads the given zip file into the database as an OSV.
 // It is assumed that the file is JSON and in the working directory of the db
 func (db *ZipDB) loadZipFile(zipFile *zip.File, names []string) {
@@ -219,7 +241,22 @@ func (db *ZipDB) loadZipFile(zipFile *zip.File, names []string) {
 		return
 	}
 
-	db.Vulnerabilities = append(db.Vulnerabilities, vulnerability)
+	// if we have been provided a list of package names, only load advisories
+	// that might actually affect those packages, rather than all advisories
+	if len(names) == 0 || mightAffectPackages(vulnerability, names) {
+		db.Vulnerabilities = append(db.Vulnerabilities, vulnerability)
+
+		// Populate index
+		if db.Index == nil {
+			db.Index = make(map[string][]*osvschema.Vulnerability)
+		}
+		for _, affected := range vulnerability.GetAffected() {
+			pkgName := affected.GetPackage().GetName()
+			if pkgName != "" {
+				db.Index[pkgName] = append(db.Index[pkgName], vulnerability)
+			}
+		}
+	}
 }
 
 // load fetches a zip archive of the OSV database and loads known vulnerabilities
@@ -298,8 +335,6 @@ func NewZippedDB(ctx context.Context, dbBasePath, name, url, userAgent string, o
 }
 
 // VulnerabilitiesAffectingPackage returns the vulnerabilities that affects the provided package
-//
-// TODO: Move this to another file.
 func VulnerabilitiesAffectingPackage(allVulns []*osvschema.Vulnerability, pkg imodels.PackageInfo) []*osvschema.Vulnerability {
 	var vulnerabilities []*osvschema.Vulnerability
 
@@ -310,4 +345,20 @@ func VulnerabilitiesAffectingPackage(allVulns []*osvschema.Vulnerability, pkg im
 	}
 
 	return vulnerabilities
+}
+
+// VulnerabilitiesAffectingPackageInDB returns the vulnerabilities that affects the provided package
+// using the database index if available.
+func VulnerabilitiesAffectingPackageInDB(db *ZipDB, pkg imodels.PackageInfo) []*osvschema.Vulnerability {
+	candidates := db.Vulnerabilities
+	if db.Index != nil {
+		if c, ok := db.Index[pkg.Name()]; ok {
+			candidates = c
+		} else {
+			// If not in index, it's not in the DB
+			return nil
+		}
+	}
+
+	return VulnerabilitiesAffectingPackage(candidates, pkg)
 }
