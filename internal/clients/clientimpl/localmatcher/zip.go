@@ -46,7 +46,41 @@ type ZipDB struct {
 	Index map[string][]*osvschema.Vulnerability
 }
 
+const (
+	updateCheckFreshness = time.Hour
+	lastUpdateCheckFile  = ".last-update-check"
+)
+
 var ErrOfflineDatabaseNotFound = errors.New("no offline version of the OSV database is available")
+
+func lastUpdateCheckPath(storedAt string) string {
+	return path.Join(path.Dir(storedAt), lastUpdateCheckFile)
+}
+
+func isUpdateCheckFresh(storedAt string) bool {
+	info, err := os.Stat(lastUpdateCheckPath(storedAt))
+	if err != nil {
+		return false
+	}
+	return time.Since(info.ModTime()) < updateCheckFreshness
+}
+
+func touchUpdateCheck(storedAt string) {
+	p := lastUpdateCheckPath(storedAt)
+	if err := os.MkdirAll(path.Dir(p), 0750); err != nil {
+		cmdlogger.Warnf("Failed to create directory for update check timestamp: %v", err)
+		return
+	}
+	f, err := os.OpenFile(p, os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		cmdlogger.Warnf("Failed to create update check timestamp file: %v", err)
+		return
+	}
+	f.Close()
+	if err := os.Chtimes(p, time.Now(), time.Now()); err != nil {
+		cmdlogger.Warnf("Failed to touch update check timestamp: %v", err)
+	}
+}
 
 func fetchRemoteArchiveCRC32CHash(ctx context.Context, url string) (uint32, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodHead, url, nil)
@@ -98,13 +132,19 @@ func (db *ZipDB) fetchZip(ctx context.Context) ([]byte, error) {
 	}
 
 	if err == nil {
-		remoteHash, err := fetchRemoteArchiveCRC32CHash(ctx, db.ArchiveURL)
+		// Skip the network check if we've checked this ecosystem recently (e.g. within the last hour).
+		// This reduces redundant HEAD requests when running in server mode with many scans.
+		if isUpdateCheckFresh(db.StoredAt) {
+			return cache, nil
+		}
 
+		remoteHash, err := fetchRemoteArchiveCRC32CHash(ctx, db.ArchiveURL)
 		if err != nil {
 			return nil, err
 		}
 
 		if fetchLocalArchiveCRC32CHash(cache) == remoteHash {
+			touchUpdateCheck(db.StoredAt)
 			return cache, nil
 		}
 	}
@@ -147,6 +187,8 @@ func (db *ZipDB) fetchZip(ctx context.Context) ([]byte, error) {
 
 	if err != nil {
 		cmdlogger.Warnf("Failed to save database to %s: %v", db.StoredAt, err)
+	} else {
+		touchUpdateCheck(db.StoredAt)
 	}
 
 	return body, nil

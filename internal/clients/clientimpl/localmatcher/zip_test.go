@@ -13,6 +13,7 @@ import (
 	"path"
 	"sort"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/osv-scalibr/extractor"
@@ -280,6 +281,52 @@ func TestNewZippedDB_Online_WithoutCacheAndNoHashHeader(t *testing.T) {
 
 	db, err := localmatcher.NewZippedDB(t.Context(), testDir, "my-db", ts.URL, userAgent, false, nil)
 
+	if err != nil {
+		t.Fatalf("unexpected error \"%v\"", err)
+	}
+
+	if db.Partial != false {
+		t.Errorf("db is incorrectly marked as partially loaded")
+	}
+	expectDBToHaveOSVs(t, db, osvs)
+}
+
+func TestNewZippedDB_Online_WithFreshUpdateCheck(t *testing.T) {
+	t.Parallel()
+
+	osvs := []*osvschema.Vulnerability{
+		{Id: "GHSA-1"},
+		{Id: "GHSA-2"},
+		{Id: "GHSA-3"},
+	}
+
+	testDir := testutility.CreateTestDir(t)
+
+	cache := zipOSVs(t, map[string]*osvschema.Vulnerability{
+		"GHSA-1.json": {Id: "GHSA-1"},
+		"GHSA-2.json": {Id: "GHSA-2"},
+		"GHSA-3.json": {Id: "GHSA-3"},
+	})
+
+	// Server would fail the test if any request is made - we expect none due to fresh timestamp
+	ts := createZipServer(t, func(_ http.ResponseWriter, _ *http.Request) {
+		t.Error("no server request should be made when update check is fresh")
+	})
+
+	storedAt := determineStoredAtPath(testDir, "my-db")
+	cacheWrite(t, storedAt, cache)
+
+	// Create a fresh .last-update-check timestamp so we skip the network fetch
+	checkPath := path.Join(path.Dir(storedAt), ".last-update-check")
+	if err := os.WriteFile(checkPath, nil, 0644); err != nil {
+		t.Fatalf("failed to create timestamp file: %v", err)
+	}
+	// Ensure mtime is current
+	if err := os.Chtimes(checkPath, time.Now(), time.Now()); err != nil {
+		t.Fatalf("failed to touch timestamp file: %v", err)
+	}
+
+	db, err := localmatcher.NewZippedDB(t.Context(), testDir, "my-db", ts.URL, userAgent, false, nil)
 	if err != nil {
 		t.Fatalf("unexpected error \"%v\"", err)
 	}
