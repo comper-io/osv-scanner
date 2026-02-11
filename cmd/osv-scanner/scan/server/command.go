@@ -14,6 +14,7 @@ import (
 	"github.com/google/osv-scanner/v2/internal/utility/severity"
 	"github.com/google/osv-scanner/v2/pkg/models"
 	"github.com/google/osv-scanner/v2/pkg/osvscanner"
+	"github.com/ossf/osv-schema/bindings/go/osvschema"
 	"github.com/urfave/cli/v3"
 )
 
@@ -35,6 +36,8 @@ type ScanResponse struct {
 
 type ScanRequest struct {
 	Repo string `json:"repo"`
+	// Commit is an optional git commit ID (sha) to base the scan on. When omitted, HEAD is used.
+	Commit string `json:"commit,omitempty"`
 	// Date is an optional ISO 8601 date or date-time (e.g. 2024-01-15 or 2024-01-15T12:00:00Z).
 	// When provided, only vulnerabilities that were publicly known
 	// (i.e. published) on or before this date will be returned.
@@ -109,6 +112,7 @@ func handleScan(baseAction osvscanner.ScannerActions) http.HandlerFunc {
 
 		action := baseAction
 		action.Repo = req.Repo
+		action.RepoCommit = req.Commit
 		action.VulnPublishedCutoff = cutoff
 
 		results, err := osvscanner.DoScan(action)
@@ -162,7 +166,12 @@ func buildSummary(results *models.VulnerabilityResults) ScanSummary {
 			for _, group := range pkg.Groups {
 				rating, err := severity.CalculateRating(group.MaxSeverity)
 				if err != nil {
-					s.Unknown++
+					// No CVSS score - check if it's a RustSec "unmaintained" informational advisory
+					if len(group.IDs) > 0 && isInformationalUnmaintained(pkg.Vulnerabilities, group.IDs[0]) {
+						s.Unmaintained++
+					} else {
+						s.Unknown++
+					}
 					continue
 				}
 				switch rating {
@@ -181,4 +190,30 @@ func buildSummary(results *models.VulnerabilityResults) ScanSummary {
 		}
 	}
 	return s
+}
+
+// isInformationalUnmaintained returns true if the vulnerability with the given ID
+// is a RustSec-style informational advisory marked as "unmaintained" (no CVSS, database_specific.informational).
+func isInformationalUnmaintained(vulns []*osvschema.Vulnerability, vulnID string) bool {
+	var vuln *osvschema.Vulnerability
+	for _, v := range vulns {
+		if v.GetId() == vulnID {
+			vuln = v
+			break
+		}
+	}
+	if vuln == nil {
+		return false
+	}
+	for _, affected := range vuln.GetAffected() {
+		ds := affected.GetDatabaseSpecific()
+		if ds == nil {
+			continue
+		}
+		fields := ds.GetFields()
+		if info, ok := fields["informational"]; ok && info != nil && info.GetStringValue() == "unmaintained" {
+			return true
+		}
+	}
+	return false
 }
