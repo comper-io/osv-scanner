@@ -2,6 +2,7 @@ package localmatcher
 
 import (
 	"archive/zip"
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/binary"
@@ -47,7 +48,41 @@ type ZipDB struct {
 	Index map[string][]*osvschema.Vulnerability
 }
 
+const (
+	updateCheckFreshness = time.Hour
+	lastUpdateCheckFile  = ".last-update-check"
+)
+
 var ErrOfflineDatabaseNotFound = errors.New("no offline version of the OSV database is available")
+
+func lastUpdateCheckPath(storedAt string) string {
+	return path.Join(path.Dir(storedAt), lastUpdateCheckFile)
+}
+
+func isUpdateCheckFresh(storedAt string) bool {
+	info, err := os.Stat(lastUpdateCheckPath(storedAt))
+	if err != nil {
+		return false
+	}
+	return time.Since(info.ModTime()) < updateCheckFreshness
+}
+
+func touchUpdateCheck(storedAt string) {
+	p := lastUpdateCheckPath(storedAt)
+	if err := os.MkdirAll(path.Dir(p), 0750); err != nil {
+		cmdlogger.Warnf("Failed to create directory for update check timestamp: %v", err)
+		return
+	}
+	f, err := os.OpenFile(p, os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		cmdlogger.Warnf("Failed to create update check timestamp file: %v", err)
+		return
+	}
+	f.Close()
+	if err := os.Chtimes(p, time.Now(), time.Now()); err != nil {
+		cmdlogger.Warnf("Failed to touch update check timestamp: %v", err)
+	}
+}
 
 func fetchRemoteArchiveCRC32CHash(ctx context.Context, url string) (uint32, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodHead, url, nil)
@@ -83,42 +118,36 @@ func fetchRemoteArchiveCRC32CHash(ctx context.Context, url string) (uint32, erro
 	return 0, errors.New("could not find crc32c= checksum")
 }
 
-func fetchLocalArchiveCRC32CHash(f *os.File) (uint32, error) {
-	h := crc32.New(crc32.MakeTable(crc32.Castagnoli))
-
-	if _, err := io.Copy(h, f); err != nil {
-		return 0, err
-	}
-
-	return h.Sum32(), nil
+func fetchLocalArchiveCRC32CHash(data []byte) uint32 {
+	return crc32.Checksum(data, crc32.MakeTable(crc32.Castagnoli))
 }
 
-func (db *ZipDB) fetchZip(ctx context.Context) (*os.File, error) {
-	f, err := os.Open(db.StoredAt)
+func (db *ZipDB) fetchZip(ctx context.Context) ([]byte, error) {
+	cache, err := os.ReadFile(db.StoredAt)
 
 	if db.Offline {
 		if err != nil {
 			return nil, ErrOfflineDatabaseNotFound
 		}
 
-		return f, nil
+		return cache, nil
 	}
 
 	if err == nil {
+		// Skip the network check if we've checked this ecosystem recently (e.g. within the last hour).
+		// This reduces redundant HEAD requests when running in server mode with many scans.
+		if isUpdateCheckFresh(db.StoredAt) {
+			return cache, nil
+		}
+
 		remoteHash, err := fetchRemoteArchiveCRC32CHash(ctx, db.ArchiveURL)
-
 		if err != nil {
 			return nil, err
 		}
 
-		localHash, err := fetchLocalArchiveCRC32CHash(f)
-
-		if err != nil {
-			return nil, err
-		}
-
-		if remoteHash == localHash {
-			return f, nil
+		if fetchLocalArchiveCRC32CHash(cache) == remoteHash {
+			touchUpdateCheck(db.StoredAt)
+			return cache, nil
 		}
 	}
 
@@ -143,27 +172,28 @@ func (db *ZipDB) fetchZip(ctx context.Context) (*os.File, error) {
 		return nil, fmt.Errorf("db host returned %s", resp.Status)
 	}
 
+	var body []byte
+
+	body, err = io.ReadAll(resp.Body)
+
+	if err != nil {
+		return nil, fmt.Errorf("could not read OSV database archive from response: %w", err)
+	}
+
 	err = os.MkdirAll(path.Dir(db.StoredAt), 0750)
 
-	if err != nil {
-		return nil, fmt.Errorf("could not create cache directory: %w", err)
+	if err == nil {
+		//nolint:gosec // being world readable is fine
+		err = os.WriteFile(db.StoredAt, body, 0644)
 	}
 
-	f, err = os.OpenFile(db.StoredAt, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
-
 	if err != nil {
-		return nil, fmt.Errorf("could not create cache file: %w", err)
+		cmdlogger.Warnf("Failed to save database to %s: %v", db.StoredAt, err)
+	} else {
+		touchUpdateCheck(db.StoredAt)
 	}
 
-	_, err = io.Copy(f, resp.Body)
-
-	if err != nil {
-		return nil, fmt.Errorf("could not write cache file: %w", err)
-	}
-
-	_, _ = f.Seek(0, io.SeekStart)
-
-	return f, nil
+	return body, nil
 }
 
 func mightAffectPackagesBytes(content []byte, names []string) bool {
@@ -274,21 +304,13 @@ func (db *ZipDB) load(ctx context.Context, names []string) error {
 	start := time.Now()
 	cmdlogger.Infof("Loading %s OSV database from %s...", db.Name, db.StoredAt)
 
-	f, err := db.fetchZip(ctx)
+	body, err := db.fetchZip(ctx)
 
 	if err != nil {
 		return err
 	}
 
-	defer f.Close()
-
-	s, err := f.Stat()
-
-	if err != nil {
-		return err
-	}
-
-	zipReader, err := zip.NewReader(f, s.Size())
+	zipReader, err := zip.NewReader(bytes.NewReader(body), int64(len(body)))
 	if err != nil {
 		return fmt.Errorf("could not read OSV database archive: %w", err)
 	}
