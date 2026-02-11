@@ -12,6 +12,7 @@ import (
 	"os"
 	"slices"
 	"sort"
+	"time"
 
 	scalibr "github.com/google/osv-scalibr"
 	"github.com/google/osv-scalibr/artifact/image/layerscanning/image"
@@ -70,6 +71,11 @@ type ScannerActions struct {
 	// Git repository scanning
 	Repo       string
 	RepoCommit string
+
+	// VulnPublishedCutoff, when non-zero, is used to filter out
+	// vulnerabilities that were not yet publicly known at or before
+	// this point in time.
+	VulnPublishedCutoff time.Time
 }
 
 type ExperimentalScannerActions struct {
