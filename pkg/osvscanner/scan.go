@@ -262,20 +262,7 @@ func scan(accessors ExternalAccessors, actions ScannerActions) (*inventory.Inven
 			return nil, ErrNoPackagesFound
 		}
 
-		scanResult := imodels.ScanResult{
-			GenericFindings: sr.Inventory.GenericFindings,
-		}
-
-		// Convert to imodels.PackageScanResult for use in the rest of osv-scanner
-		for _, inv := range sr.Inventory.Packages {
-			pi := imodels.FromInventory(inv)
-			scanResult.PackageResults = append(
-				scanResult.PackageResults,
-				imodels.PackageScanResult{PackageInfo: pi},
-			)
-		}
-
-		return &scanResult, nil
+		return &sr.Inventory, nil
 	}
 
 	// Build list of paths for each root

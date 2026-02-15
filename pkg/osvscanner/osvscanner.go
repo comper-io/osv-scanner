@@ -136,7 +136,6 @@ func InitializeExternalAccessors(actions ScannerActions) (ExternalAccessors, err
 	externalAccessors := ExternalAccessors{
 		DependencyClients: map[osvconstants.Ecosystem]resolve.Client{},
 	}
-	var err error
 
 	userAgent := "osv-scanner-api"
 	if actions.RequestUserAgent != "" {
