@@ -13,6 +13,7 @@ import (
 	"github.com/google/osv-scalibr/enricher/enricherlist"
 	"github.com/google/osv-scalibr/extractor/filesystem/language/cpp/conanlock"
 	"github.com/google/osv-scalibr/extractor/filesystem/language/dart/pubspec"
+	"github.com/google/osv-scalibr/extractor/filesystem/language/dotnet/csproj"
 	"github.com/google/osv-scalibr/extractor/filesystem/language/dotnet/depsjson"
 	"github.com/google/osv-scalibr/extractor/filesystem/language/dotnet/packagesconfig"
 	"github.com/google/osv-scalibr/extractor/filesystem/language/dotnet/packageslockjson"
@@ -28,6 +29,7 @@ import (
 	"github.com/google/osv-scalibr/extractor/filesystem/language/javascript/packagelockjson"
 	"github.com/google/osv-scalibr/extractor/filesystem/language/javascript/pnpmlock"
 	"github.com/google/osv-scalibr/extractor/filesystem/language/javascript/yarnlock"
+	"github.com/google/osv-scalibr/extractor/filesystem/language/perl/cpan"
 	"github.com/google/osv-scalibr/extractor/filesystem/language/php/composerlock"
 	"github.com/google/osv-scalibr/extractor/filesystem/language/python/pdmlock"
 	"github.com/google/osv-scalibr/extractor/filesystem/language/python/pipfilelock"
@@ -111,10 +113,14 @@ var ExtractorPresets = map[string]extractors.InitMap{
 		// Rust
 		cargolock.Name: {cargolock.New},
 
-		// NuGet
+		// NuGet / .NET
+		csproj.Name:           {csproj.NewFromPluginConfig},
 		depsjson.Name:         {depsjson.New},
 		packagesconfig.Name:   {packagesconfig.New},
 		packageslockjson.Name: {packageslockjson.New},
+
+		// Perl
+		cpan.Name: {cpan.New},
 
 		// Haskell
 		cabal.Name:     {cabal.New},
