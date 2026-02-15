@@ -12,6 +12,7 @@ import (
 	"github.com/google/osv-scalibr/extractor/filesystem"
 	"github.com/google/osv-scalibr/extractor/filesystem/language/cpp/conanlock"
 	"github.com/google/osv-scalibr/extractor/filesystem/language/dart/pubspec"
+	"github.com/google/osv-scalibr/extractor/filesystem/language/dotnet/csproj"
 	"github.com/google/osv-scalibr/extractor/filesystem/language/dotnet/depsjson"
 	"github.com/google/osv-scalibr/extractor/filesystem/language/dotnet/packagesconfig"
 	"github.com/google/osv-scalibr/extractor/filesystem/language/dotnet/packageslockjson"
@@ -26,6 +27,7 @@ import (
 	"github.com/google/osv-scalibr/extractor/filesystem/language/javascript/packagelockjson"
 	"github.com/google/osv-scalibr/extractor/filesystem/language/javascript/pnpmlock"
 	"github.com/google/osv-scalibr/extractor/filesystem/language/javascript/yarnlock"
+	"github.com/google/osv-scalibr/extractor/filesystem/language/perl/cpan"
 	"github.com/google/osv-scalibr/extractor/filesystem/language/php/composerlock"
 	"github.com/google/osv-scalibr/extractor/filesystem/language/python/pdmlock"
 	"github.com/google/osv-scalibr/extractor/filesystem/language/python/pipfilelock"
@@ -64,9 +66,12 @@ var osvscannerScalibrExtractionMapping = map[string][]string{
 	"composer.lock":               {composerlock.Name},
 	"mix.lock":                    {mixlock.Name},
 	"renv.lock":                   {renvlock.Name},
+	"dotnet/csproj":               {csproj.Name},
+	"perl/cpan":                   {cpan.Name},
 	"deps.json":                   {depsjson.Name},
 	"packages.config":             {packagesconfig.Name},
 	"packages.lock.json":          {packageslockjson.Name},
+	"META.json":                   {cpan.Name},
 	"conan.lock":                  {conanlock.Name},
 	"go.mod":                      {gomod.Name},
 	"bun.lock":                    {bunlock.Name},

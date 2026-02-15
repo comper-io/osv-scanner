@@ -1276,6 +1276,8 @@ OPTIONS:
    --experimental-exclude string [ --experimental-exclude string ]                  exclude directory paths during scanning; use g:pattern for glob, r:pattern for regex, or just dirname for exact match (can be repeated)
    --data-source string                                                             source to fetch package information from; value can be: deps.dev, native (default: "deps.dev")
    --maven-registry string                                                          URL of the default registry to fetch Maven metadata
+   --repo string                                                                    scan a bare git repository at the given path
+   --repo-commit string, --commit string                                            specific commit to scan in the git repository (requires --repo)
    --config string                                                                  set/override config file
    --format string, -f string                                                       sets the output format; value can be: table, html, vertical, json, markdown, sarif, gh-annotations, cyclonedx-1-4, cyclonedx-1-5, cyclonedx-1-6, cyclonedx-1-7, spdx-2-3 (default: "table")
    --serve                                                                          output as HTML result and serve it locally

@@ -213,7 +213,7 @@ func scan(
 
 		gitFS, err := gitfs.New(actions.Repo, actions.RepoCommit)
 		if err != nil {
-			return nil, fmt.Errorf("failed to initialize git filesystem: %w", err)
+			return nil, nil, fmt.Errorf("failed to initialize git filesystem: %w", err)
 		}
 
 		capabilities := plugin.Capabilities{
@@ -257,7 +257,7 @@ func scan(
 
 		// --- Check status of the run ---
 		if sr.Status.Status == plugin.ScanStatusFailed {
-			return nil, errors.New(sr.Status.FailureReason)
+			return nil, nil, errors.New(sr.Status.FailureReason)
 		}
 
 		for _, status := range sr.PluginStatus {
@@ -280,10 +280,10 @@ func scan(
 		sr.Inventory.Packages = invsCompact
 
 		if len(sr.Inventory.Packages) == 0 {
-			return nil, ErrNoPackagesFound
+			return nil, nil, ErrNoPackagesFound
 		}
 
-		return &sr.Inventory, nil
+		return &sr.Inventory, findFilterAnnotator(plugins), nil
 	}
 
 	// Build list of paths for each root

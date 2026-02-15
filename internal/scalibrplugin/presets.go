@@ -31,6 +31,7 @@ import (
 	"github.com/google/osv-scalibr/extractor/filesystem/language/javascript/packagelockjson"
 	"github.com/google/osv-scalibr/extractor/filesystem/language/javascript/pnpmlock"
 	"github.com/google/osv-scalibr/extractor/filesystem/language/javascript/yarnlock"
+	"github.com/google/osv-scalibr/extractor/filesystem/language/perl/cpan"
 	"github.com/google/osv-scalibr/extractor/filesystem/language/php/composerlock"
 	"github.com/google/osv-scalibr/extractor/filesystem/language/python/pdmlock"
 	"github.com/google/osv-scalibr/extractor/filesystem/language/python/pipfilelock"
@@ -119,12 +120,15 @@ var ExtractorPresets = map[string]extractors.InitMap{
 		// Rust
 		cargolock.Name: {protoCfg(cargolock.New)},
 
-		// NuGet
+		// NuGet / .NET
 		csproj.Name:           {protoCfg(csproj.New)},
 		depsjson.Name:         {protoCfg(depsjson.New)},
 		nugetcpm.Name:         {protoCfg(nugetcpm.New)},
 		packagesconfig.Name:   {protoCfg(packagesconfig.New)},
 		packageslockjson.Name: {protoCfg(packageslockjson.New)},
+
+		// Perl
+		cpan.Name: {protoCfg(cpan.New)},
 
 		// Haskell
 		cabal.Name:     {protoCfg(cabal.New)},
