@@ -41,6 +41,25 @@ The above all results in accurate and actionable vulnerability notifications, wh
 To install OSV-Scanner, please refer to the [installation section](https://google.github.io/osv-scanner/installation) of our documentation. OSV-Scanner releases can be found on the [releases page](https://github.com/google/osv-scanner/releases) of the GitHub repository. The recommended method is to download a prebuilt binary for your platform. Alternatively, you can use
 `go install github.com/google/osv-scanner/v2/cmd/osv-scanner@latest` to build it from source.
 
+### Publishing the Comper beta Docker image
+
+Build and smoke-test the server image from the repository root:
+
+```bash
+docker build . -t comperio/osv-scanner-server:beta
+docker run --rm comperio/osv-scanner-server:beta scan server --help
+```
+
+After verifying the image, publish the rolling beta tag to Docker Hub:
+
+```bash
+docker login
+docker push comperio/osv-scanner-server:beta
+```
+
+Git release tags follow the corresponding upstream OSV-Scanner version with a
+`-comper` suffix, for example `v2.5.1-comper`.
+
 ## Key Features
 
 For more information, please read our [detailed documentation](https://google.github.io/osv-scanner) to learn how to use OSV-Scanner. For detailed information about each feature, click their titles in this README.

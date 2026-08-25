@@ -14,6 +14,8 @@
 
 FROM golang:1.26.6-alpine3.23@sha256:e57c41c1d5864341031181b0db34b9a537bb5773eb6428e4e5bdaea0f9135406 AS builder
 
+RUN apk --no-cache add git
+
 WORKDIR /src
 COPY ./go.mod ./go.sum ./
 RUN go mod download
