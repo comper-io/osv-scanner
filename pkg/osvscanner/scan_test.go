@@ -1,10 +1,12 @@
 package osvscanner
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/google/osv-scalibr/plugin"
+	scanconfig "github.com/google/osv-scanner/v2/internal/config"
 )
 
 func Test_networkCapability(t *testing.T) {
@@ -51,6 +53,42 @@ func Test_networkCapability(t *testing.T) {
 				t.Errorf("networkCapability(%+v) = %v, want %v", tt.actions, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestScanIncludesPackageJSONDependencies(t *testing.T) {
+	dir := t.TempDir()
+	packageJSON := `{
+		"name": "example-app",
+		"version": "1.0.0",
+		"dependencies": {
+			"lodash": "^4.17.20"
+		}
+	}`
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(packageJSON), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	manager := &scanconfig.Manager{
+		DefaultConfig: scanconfig.Config{},
+		ConfigMap:     make(map[string]scanconfig.Config),
+	}
+	inv, _, err := scan(ExternalAccessors{}, ScannerActions{
+		DirectoryPaths:              []string{dir},
+		Recursive:                   true,
+		PluginNetworkDisabled:       true,
+		IncludeManifestDependencies: true,
+	}, nil, manager)
+	if err != nil {
+		t.Fatalf("scan(package.json): %v", err)
+	}
+
+	versions := make(map[string]string)
+	for _, pkg := range inv.Packages {
+		versions[pkg.Name] = pkg.Version
+	}
+	if got := versions["lodash"]; got != "4.17.20" {
+		t.Errorf("lodash version = %q, want 4.17.20; packages: %v", got, versions)
 	}
 }
 

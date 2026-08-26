@@ -52,6 +52,9 @@ type ScannerActions struct {
 	CallAnalysisStates map[string]bool
 	ShowAllPackages    bool
 	ShowAllVulns       bool
+	// IncludeManifestDependencies enables extractors that infer concrete package
+	// versions directly from manifest constraints, such as package.json.
+	IncludeManifestDependencies bool
 
 	// local databases
 	CompareOffline    bool

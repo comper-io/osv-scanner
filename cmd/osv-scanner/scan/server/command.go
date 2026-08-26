@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	scalibrconfig "github.com/google/osv-scalibr/plugin/config"
@@ -36,6 +39,9 @@ type ScanResponse struct {
 
 type ScanRequest struct {
 	Repo string `json:"repo"`
+	// Files contains dependency files to scan without giving the server access
+	// to a repository. Paths must be relative and retain their repository layout.
+	Files []ScanFile `json:"files,omitempty"`
 	// Commit is an optional git commit ID (sha) to base the scan on. When omitted, HEAD is used.
 	Commit string `json:"commit,omitempty"`
 	// Date is an optional ISO 8601 date or date-time (e.g. 2024-01-15 or 2024-01-15T12:00:00Z).
@@ -43,6 +49,17 @@ type ScanRequest struct {
 	// (i.e. published) on or before this date will be returned.
 	Date string `json:"date,omitempty"`
 }
+
+// ScanFile is an uploaded dependency file and its repository-relative path.
+type ScanFile struct {
+	Path    string `json:"path"`
+	Content string `json:"content"`
+}
+
+const (
+	maxScanRequestBytes = 32 << 20
+	maxScanFiles        = 1000
+)
 
 func Command(stdout, stderr io.Writer, clientFactories scalibrconfig.ClientFactories) *cli.Command {
 	return &cli.Command{
@@ -76,6 +93,7 @@ func Command(stdout, stderr io.Writer, clientFactories scalibrconfig.ClientFacto
 
 			cmdlogger.Infof("Server starting on %s", addr)
 			cmdlogger.Infof("To scan a repo: curl -X POST -d '{\"repo\": \"/path/to/repo\"}' http://%s/scan", addr)
+			cmdlogger.Infof("The /scan endpoint also accepts dependency file contents in the 'files' array")
 
 			return http.ListenAndServe(addr, nil)
 		},
@@ -83,20 +101,36 @@ func Command(stdout, stderr io.Writer, clientFactories scalibrconfig.ClientFacto
 }
 
 func handleScan(baseAction osvscanner.ScannerActions) http.HandlerFunc {
+	return handleScanWithScanner(baseAction, osvscanner.DoScan)
+}
+
+func handleScanWithScanner(
+	baseAction osvscanner.ScannerActions,
+	scan func(osvscanner.ScannerActions) (models.VulnerabilityResults, error),
+) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Only POST allowed", http.StatusMethodNotAllowed)
 			return
 		}
 
+		r.Body = http.MaxBytesReader(w, r.Body, maxScanRequestBytes)
 		var req ScanRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "Invalid JSON: "+err.Error(), http.StatusBadRequest)
 			return
 		}
 
-		if req.Repo == "" {
-			http.Error(w, "Missing 'repo' in JSON body", http.StatusBadRequest)
+		if req.Repo != "" && len(req.Files) > 0 {
+			http.Error(w, "Provide either 'repo' or 'files', not both", http.StatusBadRequest)
+			return
+		}
+		if req.Repo == "" && len(req.Files) == 0 {
+			http.Error(w, "Missing 'repo' or 'files' in JSON body", http.StatusBadRequest)
+			return
+		}
+		if req.Commit != "" && req.Repo == "" {
+			http.Error(w, "'commit' can only be used with 'repo'", http.StatusBadRequest)
 			return
 		}
 
@@ -110,16 +144,37 @@ func handleScan(baseAction osvscanner.ScannerActions) http.HandlerFunc {
 			cutoff = parsed
 		}
 
-		action := baseAction
+		action := cloneScannerActions(baseAction)
 		action.Repo = req.Repo
 		action.RepoCommit = req.Commit
 		action.VulnPublishedCutoff = cutoff
 
-		results, err := osvscanner.DoScan(action)
+		var uploadedRoot string
+		if len(req.Files) > 0 {
+			var err error
+			var uploadedPaths []string
+			uploadedRoot, uploadedPaths, err = stageScanFiles(req.Files)
+			if err != nil {
+				http.Error(w, "Invalid 'files': "+err.Error(), http.StatusBadRequest)
+				return
+			}
+			defer os.RemoveAll(uploadedRoot)
+
+			action.DirectoryPaths = nil
+			action.LockfilePaths = uploadedPaths
+			action.SBOMPaths = nil
+			action.Recursive = true
+			action.IncludeManifestDependencies = true
+		}
+
+		results, err := scan(action)
 		// We still want to return results even if vulnerabilities are found
 		if err != nil && err != osvscanner.ErrVulnerabilitiesFound && err != osvscanner.ErrNoPackagesFound {
 			http.Error(w, "Scan failed: "+err.Error(), http.StatusInternalServerError)
 			return
+		}
+		if uploadedRoot != "" {
+			rewriteUploadedPaths(&results, uploadedRoot)
 		}
 
 		resp := ScanResponse{
@@ -130,6 +185,97 @@ func handleScan(baseAction osvscanner.ScannerActions) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(resp); err != nil {
 			cmdlogger.Errorf("Failed to encode results: %v", err)
+		}
+	}
+}
+
+func cloneScannerActions(action osvscanner.ScannerActions) osvscanner.ScannerActions {
+	action.LockfilePaths = append([]string(nil), action.LockfilePaths...)
+	action.DirectoryPaths = append([]string(nil), action.DirectoryPaths...)
+	action.GitCommits = append([]string(nil), action.GitCommits...)
+	action.SBOMPaths = append([]string(nil), action.SBOMPaths...)
+	action.PluginsEnabled = append([]string(nil), action.PluginsEnabled...)
+	action.PluginsDisabled = append([]string(nil), action.PluginsDisabled...)
+	return action
+}
+
+func stageScanFiles(files []ScanFile) (string, []string, error) {
+	if len(files) > maxScanFiles {
+		return "", nil, fmt.Errorf("too many files (maximum %d)", maxScanFiles)
+	}
+
+	type stagedFile struct {
+		path    string
+		content string
+	}
+	staged := make([]stagedFile, 0, len(files))
+	seen := make(map[string]struct{}, len(files))
+	for i, file := range files {
+		path, err := cleanUploadPath(file.Path)
+		if err != nil {
+			return "", nil, fmt.Errorf("file %d: %w", i, err)
+		}
+		if _, ok := seen[path]; ok {
+			return "", nil, fmt.Errorf("duplicate path %q", path)
+		}
+		seen[path] = struct{}{}
+		staged = append(staged, stagedFile{path: path, content: file.Content})
+	}
+
+	root, err := os.MkdirTemp("", "osv-scanner-upload-*")
+	if err != nil {
+		return "", nil, fmt.Errorf("create temporary directory: %w", err)
+	}
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = os.RemoveAll(root)
+		}
+	}()
+
+	paths := make([]string, 0, len(staged))
+	for _, file := range staged {
+		fullPath := filepath.Join(root, filepath.FromSlash(file.path))
+		if err := os.MkdirAll(filepath.Dir(fullPath), 0o700); err != nil {
+			return "", nil, fmt.Errorf("create directory for %q: %w", file.path, err)
+		}
+		if err := os.WriteFile(fullPath, []byte(file.content), 0o600); err != nil {
+			return "", nil, fmt.Errorf("write %q: %w", file.path, err)
+		}
+		paths = append(paths, fullPath)
+	}
+
+	cleanup = false
+	return root, paths, nil
+}
+
+func cleanUploadPath(name string) (string, error) {
+	name = strings.ReplaceAll(name, "\\", "/")
+	if name == "" || strings.HasPrefix(name, "/") {
+		return "", fmt.Errorf("path %q must be relative", name)
+	}
+	if len(name) >= 2 && name[1] == ':' && ((name[0] >= 'a' && name[0] <= 'z') || (name[0] >= 'A' && name[0] <= 'Z')) {
+		return "", fmt.Errorf("path %q must not contain a volume name", name)
+	}
+	clean := filepath.ToSlash(filepath.Clean(filepath.FromSlash(name)))
+	if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
+		return "", fmt.Errorf("path %q escapes the upload root", name)
+	}
+	if filepath.VolumeName(filepath.FromSlash(name)) != "" {
+		return "", fmt.Errorf("path %q must not contain a volume name", name)
+	}
+	return clean, nil
+}
+
+func rewriteUploadedPaths(results *models.VulnerabilityResults, root string) {
+	for i := range results.Results {
+		path := results.Results[i].Source.Path
+		if !filepath.IsAbs(path) {
+			path = string(filepath.Separator) + path
+		}
+		rel, err := filepath.Rel(root, filepath.Clean(path))
+		if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			results.Results[i].Source.Path = filepath.ToSlash(rel)
 		}
 	}
 }

@@ -19,6 +19,7 @@ import (
 	"github.com/google/osv-scalibr/enricher/reachability/java"
 	"github.com/google/osv-scalibr/extractor"
 	"github.com/google/osv-scalibr/extractor/filesystem"
+	"github.com/google/osv-scalibr/extractor/filesystem/language/javascript/packagejson"
 	"github.com/google/osv-scalibr/extractor/filesystem/simplefileapi"
 	"github.com/google/osv-scalibr/fs"
 	"github.com/google/osv-scalibr/fs/gitfs"
@@ -75,6 +76,15 @@ func getPlugins(
 			},
 		},
 	)
+	if actions.IncludeManifestDependencies {
+		pluginSpecific = append(pluginSpecific, &cpb.PluginSpecificConfig{
+			Config: &cpb.PluginSpecificConfig_JavascriptPackageJson{
+				JavascriptPackageJson: &cpb.JavascriptPackageJsonConfig{
+					IncludeDependencies: true,
+				},
+			},
+		})
+	}
 
 	pluginSpecific = append(pluginSpecific, &cpb.PluginSpecificConfig{
 		Config: &cpb.PluginSpecificConfig_Osvlocal{
@@ -115,6 +125,9 @@ func getPlugins(
 
 	if !actions.PluginsNoDefaults {
 		actions.PluginsEnabled = append(actions.PluginsEnabled, defaultPlugins...)
+	}
+	if actions.IncludeManifestDependencies {
+		actions.PluginsEnabled = append(actions.PluginsEnabled, packagejson.Name)
 	}
 
 	if !actions.TransitiveScanning.Disabled {

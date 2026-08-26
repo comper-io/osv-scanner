@@ -41,24 +41,60 @@ The above all results in accurate and actionable vulnerability notifications, wh
 To install OSV-Scanner, please refer to the [installation section](https://google.github.io/osv-scanner/installation) of our documentation. OSV-Scanner releases can be found on the [releases page](https://github.com/google/osv-scanner/releases) of the GitHub repository. The recommended method is to download a prebuilt binary for your platform. Alternatively, you can use
 `go install github.com/google/osv-scanner/v2/cmd/osv-scanner@latest` to build it from source.
 
-### Publishing the Comper beta Docker image
+### Publishing a Comper Docker image
 
+Use the corresponding upstream OSV-Scanner version with a `-comper` suffix.
 Build and smoke-test the server image from the repository root:
 
 ```bash
-docker build . -t comperio/osv-scanner-server:beta
-docker run --rm comperio/osv-scanner-server:beta scan server --help
+VERSION=v2.5.1-comper
+docker build . -t "comperio/osv-scanner-server:${VERSION}"
+docker run --rm "comperio/osv-scanner-server:${VERSION}" scan server --help
 ```
 
-After verifying the image, publish the rolling beta tag to Docker Hub:
+After verifying the image, publish that immutable version tag to Docker Hub:
 
 ```bash
 docker login
-docker push comperio/osv-scanner-server:beta
+docker push "comperio/osv-scanner-server:${VERSION}"
 ```
 
-Git release tags follow the corresponding upstream OSV-Scanner version with a
-`-comper` suffix, for example `v2.5.1-comper`.
+Git release tags use the same version. Do not move the rolling `beta` tag as part
+of a versioned release; update it only when an explicit beta rollout is intended.
+
+### Scanning uploaded dependency files
+
+The server's `POST /scan` endpoint accepts repository-relative dependency file
+contents, so the server does not need access to the source repository. Send one
+or more files in the `files` array:
+
+```bash
+jq -n \
+  --rawfile package package.json \
+  --rawfile lock package-lock.json \
+  '{files: [
+    {path: "package.json", content: $package},
+    {path: "package-lock.json", content: $lock}
+  ]}' | curl --fail-with-body \
+    --header 'Content-Type: application/json' \
+    --data-binary @- \
+    http://localhost:8080/scan
+```
+
+Preserve relative paths when sending files from a monorepo (for example,
+`packages/web/package.json`). Paths must be relative, duplicate and traversing
+paths are rejected, and each request is limited to 1,000 files and 32 MiB of
+JSON. `repo` and `files` are mutually exclusive. The existing repository API
+remains available:
+
+```json
+{"repo":"/path/to/repo","commit":"optional-git-sha"}
+```
+
+When only `package.json` is available, direct entries in `dependencies` are
+scanned at the minimum version satisfying each semver constraint. Send a lockfile
+alongside it whenever possible for the exact resolved dependency versions and
+transitive dependency graph.
 
 ## Key Features
 
