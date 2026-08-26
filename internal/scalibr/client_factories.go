@@ -22,7 +22,7 @@ type grpcClientConnCloser interface {
 // ClientFactories implements scalibrconfig.ClientFactories for osv-scanner.
 type ClientFactories struct {
 	mu               sync.Mutex
-	baseHTTPClient   *http.Client
+	httpClient       *http.Client
 	grpcClientConns  map[string]grpcClientConnCloser
 	defaultUserAgent string
 }
@@ -34,9 +34,18 @@ func NewClientFactories(baseHTTPClient *http.Client, defaultUserAgent string) *C
 	if baseHTTPClient == nil {
 		baseHTTPClient = &http.Client{}
 	}
+	transport := baseHTTPClient.Transport
+	if transport == nil {
+		transport = http.DefaultTransport
+	}
+	clientCopy := *baseHTTPClient
+	clientCopy.Transport = &userAgentRoundTripper{
+		underlying: transport,
+		userAgent:  defaultUserAgent,
+	}
 
 	return &ClientFactories{
-		baseHTTPClient:   baseHTTPClient,
+		httpClient:       &clientCopy,
 		grpcClientConns:  make(map[string]grpcClientConnCloser),
 		defaultUserAgent: defaultUserAgent,
 	}
@@ -58,20 +67,9 @@ func (rt *userAgentRoundTripper) RoundTrip(req *http.Request) (*http.Response, e
 	return rt.underlying.RoundTrip(req)
 }
 
-// HTTPClient returns a copy of the base HTTP client configured with User-Agent injection.
+// HTTPClient returns the shared HTTP client configured with User-Agent injection.
 func (c *ClientFactories) HTTPClient() *http.Client {
-	transport := c.baseHTTPClient.Transport
-	if transport == nil {
-		transport = http.DefaultTransport
-	}
-
-	clientCopy := *c.baseHTTPClient
-	clientCopy.Transport = &userAgentRoundTripper{
-		underlying: transport,
-		userAgent:  c.defaultUserAgent,
-	}
-
-	return &clientCopy
+	return c.httpClient
 }
 
 func (c *ClientFactories) GoogleHTTPClient(_ context.Context, _ ...string) (*http.Client, error) {
@@ -132,6 +130,7 @@ func (c *ClientFactories) GRPCClientConn(url string, dialOpts ...grpc.DialOption
 func (c *ClientFactories) Close() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.httpClient.CloseIdleConnections()
 
 	var errs []error
 	for url, conn := range c.grpcClientConns {
