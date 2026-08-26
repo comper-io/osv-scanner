@@ -112,6 +112,8 @@ github.com/cloudflare/circl v1.6.4 h1:pOXuDTCEYyzydgUpQ0CQz3LsinKjiSk6nNP5Lt5K64
 github.com/cloudflare/circl v1.6.4/go.mod h1:YxarevkLlbaHuWsxG6vmYNWBEsSp4pnp7j+4VljMavY=
 github.com/comper-io/osv-scalibr v0.5.3-comper h1:npKe6i7Qx/ROQHoON6NFbr7sWHiV6LlCoxK/Aao7wpA=
 github.com/comper-io/osv-scalibr v0.5.3-comper/go.mod h1:zwpKksQMgyYI0lwFZ5ImtfPnHSt4BUXw6O+AHgrGC+s=
+github.com/comper-io/osv-scalibr v0.5.3-comper.1 h1:pFUTEUUcAxNTO3eBjRi6ioNHUxTHnVeYdr7PgNNb68I=
+github.com/comper-io/osv-scalibr v0.5.3-comper.1/go.mod h1:zwpKksQMgyYI0lwFZ5ImtfPnHSt4BUXw6O+AHgrGC+s=
 github.com/compose-spec/compose-go/v2 v2.14.0 h1:uaJeo5B3+OVlu+Rx2qLBcAdXPEUUzm5nQrRiGJafRAQ=
 github.com/compose-spec/compose-go/v2 v2.14.0/go.mod h1:ZU6zlcweCZKyiB7BVfCizQT9XmkEIMFE+PRZydVcsZg=
 github.com/containerd/cgroups/v3 v3.1.3 h1:eUNflyMddm18+yrDmZPn3jI7C5hJ9ahABE5q6dyLYXQ=

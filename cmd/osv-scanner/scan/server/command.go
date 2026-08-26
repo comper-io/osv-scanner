@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/osv-scalibr/enricher/vulnmatch/osvlocal"
 	scalibrconfig "github.com/google/osv-scalibr/plugin/config"
 	"github.com/google/osv-scanner/v2/cmd/osv-scanner/internal/helper"
 	"github.com/google/osv-scanner/v2/internal/cmdlogger"
@@ -83,11 +84,20 @@ func Command(stdout, stderr io.Writer, clientFactories scalibrconfig.ClientFacto
 			experimentalScannerActions := helper.GetExperimentalScannerActions(cmd)
 			scannerAction := helper.GetCommonScannerActions(cmd, scanLicensesAllowlist)
 			scannerAction.ExperimentalScannerActions = experimentalScannerActions
-			if clientFactories != nil {
-				scannerAction.ScalibrConfig = &scalibrconfig.PluginConfig{
-					ClientFactories: clientFactories,
-				}
+
+			// The server owns these for its entire lifetime. The shared cache lets
+			// osvlocal keep fully loaded ecosystem databases across requests.
+			serverClientFactories, cleanup := osvscanner.SetupClientFactories(
+				clientFactories,
+				nil,
+				experimentalScannerActions.RequestUserAgent,
+			)
+			defer cleanup()
+			scannerAction.ScalibrConfig = &scalibrconfig.PluginConfig{
+				ClientFactories: serverClientFactories,
+				SharedCache:     scalibrconfig.NewSharedCache(),
 			}
+			osvlocal.EnableSharedDatabaseCache(scannerAction.ScalibrConfig)
 
 			http.HandleFunc("/scan", handleScan(scannerAction))
 
