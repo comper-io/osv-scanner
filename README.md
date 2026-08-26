@@ -96,6 +96,10 @@ scanned at the minimum version satisfying each semver constraint. Send a lockfil
 alongside it whenever possible for the exact resolved dependency versions and
 transitive dependency graph.
 
+See the [stateless scanner integration guide](docs/stateless-scanner-integration.md)
+for the complete match rules, batching guidance, request contract, and error
+handling.
+
 ## Key Features
 
 For more information, please read our [detailed documentation](https://google.github.io/osv-scanner) to learn how to use OSV-Scanner. For detailed information about each feature, click their titles in this README.
