@@ -62,6 +62,24 @@ docker push "comperio/osv-scanner-server:${VERSION}"
 Git release tags use the same version. Do not move the rolling `beta` tag as part
 of a versioned release; update it only when an explicit beta rollout is intended.
 
+#### Server-mode offline database cache
+
+When the server runs with `--offline-vulnerabilities --download-offline-databases`,
+it stores each ecosystem in an indexed SQLite database instead of retaining the
+complete OSV export in memory. Database refreshes are built as immutable
+generations; concurrent requests keep using the previous generation until the
+replacement is complete and validated.
+
+Persist `/root/.cache/osv-scalibr` (or set `--local-db-path`) to avoid rebuilding
+the SQLite generations after a container restart. For example:
+
+```bash
+docker run --rm -p 8080:8080 \
+  -v osv-scanner-db:/root/.cache/osv-scalibr \
+  "comperio/osv-scanner-server:${VERSION}" \
+  scan server --offline-vulnerabilities --download-offline-databases
+```
+
 ### Scanning uploaded dependency files
 
 The server's `POST /scan` endpoint accepts repository-relative dependency file
