@@ -114,6 +114,11 @@ scanned at the minimum version satisfying each semver constraint. Send a lockfil
 alongside it whenever possible for the exact resolved dependency versions and
 transitive dependency graph.
 
+Use `POST /summaries` with the same scan input and a `dates` array when only
+historical severity totals are needed. The server performs dependency extraction
+and vulnerability matching once, then returns one summary per requested
+publication cutoff without returning vulnerability details.
+
 See the [stateless scanner integration guide](docs/stateless-scanner-integration.md)
 for the complete match rules, batching guidance, request contract, and error
 handling.

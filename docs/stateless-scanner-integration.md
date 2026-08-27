@@ -40,6 +40,60 @@ after that time.
 Do not send `repo` or `commit` with `files`; the two request modes are mutually
 exclusive. File content is a normal JSON string, not base64.
 
+## Historical summaries
+
+Use `POST /summaries` when only severity totals are needed at multiple
+publication cutoffs. It accepts the same `files` or `repo`/`commit` scan input,
+plus a required `dates` array:
+
+```json
+{
+  "files": [
+    {
+      "path": "package-lock.json",
+      "content": "{...}"
+    }
+  ],
+  "dates": [
+    "2024-12-31T23:59:59Z",
+    "2025-12-31T23:59:59Z"
+  ]
+}
+```
+
+The response contains totals in the same order as the requested dates and does
+not include package or vulnerability details:
+
+```json
+{
+  "summaries": [
+    {
+      "date": "2024-12-31T23:59:59Z",
+      "critical": 1,
+      "high": 3,
+      "medium": 7,
+      "low": 2,
+      "unknown": 0,
+      "unmaintained": 1
+    },
+    {
+      "date": "2025-12-31T23:59:59Z",
+      "critical": 2,
+      "high": 5,
+      "medium": 9,
+      "low": 2,
+      "unknown": 1,
+      "unmaintained": 1
+    }
+  ]
+}
+```
+
+One request may contain at most 100 dates. Date formats and publication-cutoff
+semantics are identical to the `date` field on `/scan`. The server extracts
+dependencies and queries its vulnerability database once, then calculates all
+requested summaries in memory. Dates may be supplied in any order.
+
 ## File selection
 
 Match against the repository-relative path using `/` as the separator. Matching

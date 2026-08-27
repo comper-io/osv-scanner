@@ -66,7 +66,7 @@ func Command(stdout, stderr io.Writer, clientFactories scalibrconfig.ClientFacto
 	return &cli.Command{
 		Name:        "server",
 		Usage:       "Runs osv-scanner in server mode to avoid database reload overhead.",
-		Description: "Starts an HTTP server that accepts scan requests via POST /scan.",
+		Description: "Starts an HTTP server that accepts scan requests via POST /scan and POST /summaries.",
 		Flags: append([]cli.Flag{
 			&cli.StringFlag{
 				Name:  "listen",
@@ -100,10 +100,12 @@ func Command(stdout, stderr io.Writer, clientFactories scalibrconfig.ClientFacto
 			osvlocal.EnableSharedDatabaseCache(scannerAction.ScalibrConfig)
 
 			http.HandleFunc("/scan", handleScan(scannerAction))
+			http.HandleFunc("/summaries", handleSummaries(scannerAction))
 
 			cmdlogger.Infof("Server starting on %s", addr)
 			cmdlogger.Infof("To scan a repo: curl -X POST -d '{\"repo\": \"/path/to/repo\"}' http://%s/scan", addr)
 			cmdlogger.Infof("The /scan endpoint also accepts dependency file contents in the 'files' array")
+			cmdlogger.Infof("The /summaries endpoint accepts the same scan inputs plus a 'dates' array")
 
 			return http.ListenAndServe(addr, nil)
 		},
@@ -119,6 +121,12 @@ func handleScanWithScanner(
 	scan func(osvscanner.ScannerActions) (models.VulnerabilityResults, error),
 ) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		started := time.Now()
+		cmdlogger.Infof("Started request method=%s path=%s", r.Method, r.URL.Path)
+		defer func() {
+			cmdlogger.Infof("Completed request method=%s path=%s duration=%s", r.Method, r.URL.Path, time.Since(started))
+		}()
+
 		if r.Method != http.MethodPost {
 			http.Error(w, "Only POST allowed", http.StatusMethodNotAllowed)
 			return
